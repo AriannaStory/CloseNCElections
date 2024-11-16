@@ -1,0 +1,5 @@
+.venv
+data
+.python-version
+*.html
+*.csv
