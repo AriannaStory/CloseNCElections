@@ -9,7 +9,7 @@ import requests
 from datetime import datetime, timedelta
 from collections import defaultdict
 
-# Implement some really rudimentary caching to prevent the SBOE from hating me.
+# Implement some rudimentary caching to prevent the SBOE from hating me.
 def get_data_file(election_date, filename, url, update=False):
     data_dir = os.path.join('data', election_date)
     if not os.path.exists(data_dir):
@@ -49,7 +49,7 @@ def get_data_file(election_date, filename, url, update=False):
     return data, data_timestamp
 
 # Make the report look a bit nicer
-# (i.e. instead of NC STATE HOUSE OF REP..., NC State House of Representatives)
+# (i.e., instead of NC STATE HOUSE OF REP..., NC State House of Representatives)
 def contest_title_format(text):
     words = text.split()
     exceptions = {'nc': 'NC', 'of': 'of', 'us': 'US'}
@@ -72,13 +72,11 @@ def main():
     parser.add_argument('--update', action='store_true', help='Force update of cached data')
     args = parser.parse_args()
 
-    # Since --output is optional, make sure we save by default in the right file extension
-    if not args.output:
-        args.output = f'results.{args.format}'
-    elif not args.output.endswith(f'.{args.format}'):
+    # Ensure the output file has the correct extension
+    if not args.output.endswith(f'.{args.format}'):
         args.output += f'.{args.format}'
 
-    # Provide the option to target a specific election, otherwise get the latest.
+    # Determine the election date
     if args.election:
         election_date = args.election
     else:
@@ -92,7 +90,7 @@ def main():
         edt = elections_data[0]['edt']
         election_date = datetime.strptime(edt, '%m/%d/%Y').strftime('%Y%m%d')
 
-    # Get all of North Carolina's county mappings from the SBOE
+    # Fetch county information
     county_url = f'https://er.ncsbe.gov/enr/{election_date}/data/county.txt'
     counties_data, data_timestamp = get_data_file(election_date, 'county.txt', county_url, update=args.update)
     if counties_data is None:
@@ -120,10 +118,10 @@ def main():
             return
         filters_applied = [f'Only showing results for counties: {", ".join(county_names)}']
     else:
-        county_ids = ['0'] 
+        county_ids = ['0']
         filters_applied = []
 
-    office_url = f'https://er.ncsbe.gov/enr/{election_date}/data/office.txt' # These are the contests...
+    office_url = f'https://er.ncsbe.gov/enr/{election_date}/data/office.txt'
     office_data, office_timestamp = get_data_file(election_date, 'office.txt', office_url, update=args.update)
     if office_data is None:
         print('Error fetching office data.')
@@ -202,16 +200,17 @@ def main():
             percentage_margin = None
         if args.margin is not None:
             if percentage_margin is None:
-                continue  
+                continue
             if args.method == 'percentage':
                 if (percentage_margin * 100) > args.margin:
-                    continue 
+                    continue
             else:
                 if vote_margin > args.margin:
-                    continue 
+                    continue
         contest_county_name = next((name.title() for name, cid in county_name_to_id.items() if cid == contest_county_id), 'Statewide')
         contest_results.append({
             'contest_name': f"{contest_name} ({contest_county_name})",
+            'contest_type_code': candidates[0]['ogl'],  # Store contest type code
             'candidates': sorted_candidates,
             'top_candidate': top_candidate,
             'second_candidate': second_candidate,
@@ -238,6 +237,20 @@ def main():
     data_timestamp_str = data_timestamp.strftime('%Y-%m-%d %H:%M:%S')
 
     print(f"Using data that was last updated on: {data_timestamp_str}")
+
+    # Count the number of contests per contest type
+    contest_type_counts = defaultdict(int)
+    for contest in contest_results_sorted:
+        contest_type_code = contest['contest_type_code']
+        contest_type_counts[contest_type_code] += 1
+
+    # Prepare friendly names and sort counts
+    contest_type_counts_friendly = []
+    for code, count in contest_type_counts.items():
+        friendly_name = contest_types_friendly.get(code, code)
+        friendly_name_formatted = contest_title_format(friendly_name)
+        contest_type_counts_friendly.append((friendly_name_formatted, count))
+    contest_type_counts_friendly.sort(key=lambda x: x[0])  # Sort alphabetically
 
     if args.format == 'html':
         html_content = f'''
@@ -268,6 +281,21 @@ def main():
             .filters {{ margin-bottom: 20px; }}
             .filters h3 {{ margin-bottom: 5px; }}
             .filters ul {{ list-style-type: disc; margin-left: 20px; }}
+            /* Summary table styles */
+            .summary-table table {{
+                border-collapse: collapse;
+                width: 100%;
+                margin-bottom: 20px;
+            }}
+            .summary-table th, .summary-table td {{
+                border: 1px solid #ddd;
+                padding: 8px;
+                text-align: center;
+            }}
+            .summary-table th {{
+                background-color: #172c4a;
+                color: white;
+            }}
             /* Debug styles */
             .debug-toggle {{
                 margin-top: 10px;
@@ -304,6 +332,24 @@ def main():
             for filter_text in filters_applied:
                 html_content += f'        <li>{filter_text}</li>\n'
             html_content += '      </ul>\n'
+            html_content += '    </div>\n'
+
+        # Include the summary table if more than one contest is gathered
+        if len(contest_results_sorted) > 1:
+            html_content += '    <div class="summary-table">\n'
+            html_content += '      <h3>Number of Contests by Type:</h3>\n'
+            html_content += '      <table>\n'
+            # Headers
+            html_content += '        <tr>\n'
+            for friendly_name, _ in contest_type_counts_friendly:
+                html_content += f'          <th>{friendly_name}</th>\n'
+            html_content += '        </tr>\n'
+            # Counts
+            html_content += '        <tr>\n'
+            for _, count in contest_type_counts_friendly:
+                html_content += f'          <td>{count}</td>\n'
+            html_content += '        </tr>\n'
+            html_content += '      </table>\n'
             html_content += '    </div>\n'
 
         for idx, contest in enumerate(contest_results_sorted):
@@ -362,7 +408,6 @@ def main():
             f.write(html_content)
 
         print(f'HTML report generated: {args.output}')
-
     elif args.format == 'csv':
         csv_headers = [
             'contest',
