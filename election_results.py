@@ -58,6 +58,29 @@ def contest_title_format(text):
         for word in words
     )
 
+def is_recount_eligible(vote_margin, percentage_margin, total_votes, is_statewide):
+    """
+    Determine if a contest is eligible for a recount under NC law.
+
+    - Non-statewide: margin <= 1% of total votes cast.
+    - Statewide: margin <= the lesser of 0.5% of total votes cast or 10,000 votes.
+
+    Returns True if recount-eligible.
+    """
+    if percentage_margin is None or vote_margin is None:
+        return False
+
+    pct_margin = percentage_margin * 100
+
+    if is_statewide:
+        # Recount if margin is within the lesser of 0.5% or 10,000 votes
+        within_pct = pct_margin <= 0.5
+        within_votes = vote_margin <= 10000
+        return within_pct or within_votes
+    else:
+        # Recount if margin is within 1% of total votes
+        return pct_margin <= 1.0
+
 def main():
     parser = argparse.ArgumentParser(description='Process election data and generate a report.')
     parser.add_argument('--output', '-o', type=str, default='results', help='Path to the output file')
@@ -208,6 +231,11 @@ def main():
                 if vote_margin > args.margin:
                     continue
         contest_county_name = next((name.title() for name, cid in county_name_to_id.items() if cid == contest_county_id), 'Statewide')
+
+        # Determine recount eligibility
+        statewide = (contest_county_name == 'Statewide')
+        recount = is_recount_eligible(vote_margin, percentage_margin, total_votes, statewide)
+
         contest_results.append({
             'contest_name': f"{contest_name} ({contest_county_name})",
             'contest_type_code': candidates[0]['ogl'],  # Store contest type code
@@ -217,6 +245,7 @@ def main():
             'vote_margin': vote_margin,
             'percentage_margin': percentage_margin,
             'total_votes': total_votes,
+            'recount_eligible': recount,
             'debug_data': candidates if args.debug else None
         })
 
@@ -296,6 +325,12 @@ def main():
                 background-color: #172c4a;
                 color: white;
             }}
+            /* Recount indicator */
+            .recount {{
+                color: #cc0000;
+                font-weight: bold;
+                margin-left: 10px;
+            }}
             /* Debug styles */
             .debug-toggle {{
                 margin-top: 10px;
@@ -357,8 +392,10 @@ def main():
             percentage_margin = contest['percentage_margin']
             vote_margin = contest['vote_margin']
             total_votes = contest['total_votes']
+            recount = contest['recount_eligible']
+            recount_html = ' <span class="recount">** RECOUNT **</span>' if recount else ''
             html_content += f'<div class="contest">\n'
-            html_content += f'  <h2>{contest_title_format(contest_name)}</h2>\n'
+            html_content += f'  <h2>{contest_title_format(contest_name)}{recount_html}</h2>\n'
             if percentage_margin is not None:
                 html_content += '  <p>Margin between top two candidates: '
                 if args.method == 'percentage':
@@ -414,6 +451,7 @@ def main():
             'total_votes',
             'pct_margin_between_top_two',
             'vote_margin_between_top_two',
+            'recount_eligible',
         ]
 
         for i in range(1, 6):
@@ -435,11 +473,13 @@ def main():
                 total_votes = contest['total_votes']
                 percentage_margin = contest['percentage_margin']
                 vote_margin = contest['vote_margin']
+                recount = contest['recount_eligible']
                 row = [
-                    contest_name,
+                    f"** RECOUNT ** {contest_name}" if recount else contest_name,
                     total_votes,
                     f"{percentage_margin*100:.2f}%" if percentage_margin is not None else '',
                     vote_margin,
+                    'YES' if recount else 'NO',
                 ]
                 candidates = contest['candidates']
                 for i in range(5):
